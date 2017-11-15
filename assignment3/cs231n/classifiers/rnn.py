@@ -144,9 +144,11 @@ class CaptioningRNN(object):
     # 2
     we_out, we_cache = word_embedding_forward(captions_in, W_embed)
 
+    # 3
     if self.cell_type == 'rnn':
-      # 3
       h_out, h_cache = rnn_forward(we_out, h0, Wx, Wh, b)
+    else:
+      h_out, h_cache = lstm_forward(we_out, h0, Wx, Wh, b)
 
       # 4
       t_out, t_cache = temporal_affine_forward(h_out, W_vocab, b_vocab)
@@ -158,6 +160,8 @@ class CaptioningRNN(object):
     dh_out, dW_vocab, db_vocab = temporal_affine_backward(dscore, t_cache)
     if self.cell_type == 'rnn':
       dwe_out, dh0, dWx, dWh, db = rnn_backward(dh_out, h_cache)
+    else:
+      dwe_out, dh0, dWx, dWh, db = lstm_backward(dh_out, h_cache)
     dW_embed = word_embedding_backward(dwe_out, we_cache)
 
     grads['W_proj'] = features.T.dot(dh0)
@@ -168,12 +172,11 @@ class CaptioningRNN(object):
     grads['b'] = db
     grads['W_vocab'] = dW_vocab
     grads['b_vocab'] = db_vocab
-    ############################################################################
-    #                             END OF YOUR CODE                             #
-    ############################################################################
+    ###########################################################################
+    #                             END OF YOUR CODE                            #
+    ###########################################################################
 
     return loss, grads
-
 
   def sample(self, features, max_length=30):
     """
@@ -232,28 +235,33 @@ class CaptioningRNN(object):
     h0 = features.dot(W_proj) + b_proj
     x0 = self._start
 
-    x_prev = x0
-    h_prev = h0
+    prev_x = x0
+    prev_h = h0
+    prev_c = np.zeros_like(prev_h)
     for t in range(max_length):
       # 1
-      x_embed, _ = word_embedding_forward(x_prev, W_embed)
+      x_embed, _ = word_embedding_forward(prev_x, W_embed)
 
       # 2
       if self.cell_type == 'rnn':
-        h_next, _ = rnn_step_forward(x_embed, h_prev, Wx, Wh, b)
-
+        next_h, _ = rnn_step_forward(x_embed, prev_h, Wx, Wh, b)
+      else:
+        next_h, next_c, cache = lstm_step_forward(
+          x_embed, prev_h, prev_c, Wx, Wh, b)
       # 3
       scores, _ = temporal_affine_forward(
-        h_next[:, np.newaxis, :], W_vocab, b_vocab)
+        next_h[:, np.newaxis, :], W_vocab, b_vocab)
 
       # 4
-      x_next = np.argmax(scores.reshape((N, -1)), axis=1)
-      captions[:, t] = x_next
+      next_x = np.argmax(scores.reshape((N, -1)), axis=1)
+      captions[:, t] = next_x
 
       # Cycle over states
-      x_prev = x_next
-      h_prev = h_next
-    ############################################################################
-    #                             END OF YOUR CODE                             #
-    ############################################################################
+      prev_x = next_x
+      prev_h = next_h
+      if self.cell_type != 'rnn':
+        prev_c = next_c
+    ###########################################################################
+    #                             END OF YOUR CODE                            #
+    ###########################################################################
     return captions
